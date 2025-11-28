@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>スマホセンサー計測</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="test.js" defer></script>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      padding: 10px;
+    }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    button {
+      margin: 5px 5px 5px 0;
+      padding: 8px 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>スマホセンサー計測</h1>
+
+  <p>
+    <button id="startBtn">計測開始</button>
+    <button id="stopBtn">計測停止</button>
+    <button id="saveCsv">CSVを保存</button>
+  </p>
+
+  <h2>現在の値</h2>
+
+  <p>デバイスの向き (alpha, beta, gamma, absolute):</p>
+  <textarea id="deviceorientation" rows="1"></textarea>
+
+  <p>デバイスの加速度・角速度:</p>
+  <textarea id="devicemotion" rows="4"></textarea>
+
+  <p>位置情報 (lat, lng, alt):</p>
+  <textarea id="geolocation" rows="1"></textarea>
+
+  <h2>ログ（一部）</h2>
+  <textarea id="result" rows="12"></textarea>
+
+  <p style="font-size: 0.8em; color: #555;">
+    ※ 実験中は画面をつけたままにしておくと記録が途切れにくいです。<br>
+    ※ CSV を保存した後は、スマホの「ダウンロード」から PC へ転送して解析できます。
+  </p>
+</body>
+</html>
