@@ -2,32 +2,23 @@
 const SAMPLE_INTERVAL_MS = 5000;
 
 window.addEventListener("load", () => {
-  // 保存するCSVファイル名
-  let filename = "data.csv";
+  // 種類ごとに別配列でログを保持
+  const logs = {
+    orientation: [], // time_iso, alpha, beta, gamma, absolute
+    motion: [],      // time_iso, acc_x, acc_y, acc_z, accG_x, accG_y, accG_z, rot_alpha, rot_beta, rot_gamma, motion_interval
+    location: []     // time_iso, lat, lng, alt
+  };
 
-  // ログ（1行ずつ）を入れておく配列
-  const logLines = [];
-
-  // 計測中フラグ
   let collecting = false;
 
-  // センサー最新値を保持する変数（対応していれば値が入る）
-  let alpha = null,
-    beta = null,
-    gamma = null,
-    absolute = null;
-
-  let acceleration = { x: null, y: null, z: null };
-  let accelerationIncludingGravity = { x: null, y: null, z: null };
-  let rotationRate = { alpha: null, beta: null, gamma: null };
+  // センサー値（最新値を保存）
+  let alpha = null, beta = null, gamma = null, absolute = null;
+  let acc = { x: null, y: null, z: null };
+  let accG = { x: null, y: null, z: null };
+  let rot = { alpha: null, beta: null, gamma: null };
   let motionInterval = null;
 
-  // 位置情報
-  let latitude = null;
-  let longitude = null;
-  let altitude = null;
-
-  // geolocation.watchPosition 用 ID（重複起動防止）
+  let latitude = null, longitude = null, altitude = null;
   let geoWatchId = null;
 
   // DOM 取得
@@ -41,185 +32,151 @@ window.addEventListener("load", () => {
     saveCsvBtn: document.getElementById("saveCsv"),
   };
 
-  // ==============================
-  // センサーイベント登録
-  // ==============================
+  // --------------------------------
+  // 表示用関数
+  // --------------------------------
+  function show(msg) {
+    dom.result.value = msg + "\n" + dom.result.value;
+  }
 
-  // デバイスの向き（対応していれば）
+  // --------------------------------
+  // センサーイベント登録
+  // --------------------------------
+
+  // デバイスの向き（対応している場合）
   if ("DeviceOrientationEvent" in window) {
-    window.addEventListener("deviceorientation", (event) => {
-      alpha = event.alpha;
-      beta = event.beta;
-      gamma = event.gamma;
-      absolute = event.absolute;
+    window.addEventListener("deviceorientation", (e) => {
+      alpha = e.alpha;
+      beta = e.beta;
+      gamma = e.gamma;
+      absolute = e.absolute;
 
       dom.deviceorientation.value = [alpha, beta, gamma, absolute]
-        .map((v) => (v == null ? "" : v))
+        .map(v => (v == null ? "" : v))
         .join(",");
     });
   } else {
     dom.deviceorientation.value = "DeviceOrientationEvent が使えません";
   }
 
-  // 加速度・角速度（対応していれば）
+  // 加速度・角速度（対応している場合）
   if ("DeviceMotionEvent" in window) {
-    window.addEventListener("devicemotion", (event) => {
-      if (event.acceleration) {
-        acceleration = event.acceleration;
-      }
-      if (event.accelerationIncludingGravity) {
-        accelerationIncludingGravity = event.accelerationIncludingGravity;
-      }
-      if (event.rotationRate) {
-        rotationRate = event.rotationRate;
-      }
-      motionInterval = event.interval;
+    window.addEventListener("devicemotion", (e) => {
+      if (e.acceleration) acc = e.acceleration;
+      if (e.accelerationIncludingGravity) accG = e.accelerationIncludingGravity;
+      if (e.rotationRate) rot = e.rotationRate;
+      motionInterval = e.interval;
 
-      const acc = [
-        acceleration.x,
-        acceleration.y,
-        acceleration.z,
-      ]
-        .map((v) => (v == null ? "" : v))
+      const accStr = [acc.x, acc.y, acc.z]
+        .map(v => (v == null ? "" : v))
         .join(",");
-      const accG = [
-        accelerationIncludingGravity.x,
-        accelerationIncludingGravity.y,
-        accelerationIncludingGravity.z,
-      ]
-        .map((v) => (v == null ? "" : v))
+      const accGStr = [accG.x, accG.y, accG.z]
+        .map(v => (v == null ? "" : v))
         .join(",");
-      const rot = [
-        rotationRate.alpha,
-        rotationRate.beta,
-        rotationRate.gamma,
-      ]
-        .map((v) => (v == null ? "" : v))
+      const rotStr = [rot.alpha, rot.beta, rot.gamma]
+        .map(v => (v == null ? "" : v))
         .join(",");
 
-      dom.devicemotion.value = [acc, accG, rot, motionInterval ?? ""].join(
-        "\n"
-      );
+      dom.devicemotion.value = [
+        accStr,
+        accGStr,
+        rotStr,
+        motionInterval ?? ""
+      ].join("\n");
     });
   } else {
     dom.devicemotion.value = "DeviceMotionEvent が使えません";
   }
 
-  // ==============================
-  // ログ管理系
-  // ==============================
+  // --------------------------------
+  // ログ1行追加関数（種類ごと）
+  // --------------------------------
 
-  // ログ表示用
-  function show(str) {
-    dom.result.value = str + "\n" + dom.result.value;
-  }
-
-  // 最初の1回だけヘッダ行を追加
-  function addHeaderIfNeeded() {
-    if (logLines.length > 0) return;
-
-    const header = [
-      "time_iso",
-      "type",
-      // orientation
-      "alpha",
-      "beta",
-      "gamma",
-      "absolute",
-      // motion
-      "acc_x",
-      "acc_y",
-      "acc_z",
-      "accG_x",
-      "accG_y",
-      "accG_z",
-      "rot_alpha",
-      "rot_beta",
-      "rot_gamma",
-      "motion_interval",
-      // location
-      "lat",
-      "lng",
-      "alt",
-    ];
-    logLines.push(header.join(","));
-  }
-
-  // 1行追加（type別）
-  function logRow(type, valuesArray) {
+  function addOrientationRow() {
     const now = new Date().toISOString();
-    const dataStr = valuesArray.map((v) =>
-      v === null || v === undefined ? "" : v
-    );
-    const line = [now, type, ...dataStr].join(",");
-    logLines.push(line);
-    show(line);
+
+    // ヘッダがまだなら追加
+    if (logs.orientation.length === 0) {
+      logs.orientation.push("time_iso,alpha,beta,gamma,absolute");
+    }
+
+    const row = [
+      now,
+      alpha,
+      beta,
+      gamma,
+      absolute
+    ].map(v => (v == null ? "" : v));
+
+    logs.orientation.push(row.join(","));
+    show("O: " + now);
   }
 
-  // ==============================
+  function addMotionRow() {
+    const now = new Date().toISOString();
+
+    if (logs.motion.length === 0) {
+      logs.motion.push("time_iso,acc_x,acc_y,acc_z,accG_x,accG_y,accG_z,rot_alpha,rot_beta,rot_gamma,motion_interval");
+    }
+
+    const row = [
+      now,
+      acc.x,
+      acc.y,
+      acc.z,
+      accG.x,
+      accG.y,
+      accG.z,
+      rot.alpha,
+      rot.beta,
+      rot.gamma,
+      motionInterval
+    ].map(v => (v == null ? "" : v));
+
+    logs.motion.push(row.join(","));
+    show("M: " + now);
+  }
+
+  function addLocationRow() {
+    const now = new Date().toISOString();
+
+    if (logs.location.length === 0) {
+      logs.location.push("time_iso,lat,lng,alt");
+    }
+
+    const row = [
+      now,
+      latitude,
+      longitude,
+      altitude
+    ].map(v => (v == null ? "" : v));
+
+    logs.location.push(row.join(","));
+    show("L: " + now);
+  }
+
+  // --------------------------------
   // 一定間隔ごとに記録
-  // ==============================
+  // --------------------------------
   setInterval(() => {
     if (!collecting) return;
 
-    addHeaderIfNeeded();
-
-    // 向き
-    logRow("orientation", [alpha, beta, gamma, absolute]);
-
-    // 加速度・角速度
-    logRow("motion", [
-      null, // alpha
-      null, // beta
-      null, // gamma
-      null, // absolute
-      acceleration.x,
-      acceleration.y,
-      acceleration.z,
-      accelerationIncludingGravity.x,
-      accelerationIncludingGravity.y,
-      accelerationIncludingGravity.z,
-      rotationRate.alpha,
-      rotationRate.beta,
-      rotationRate.gamma,
-      motionInterval,
-      null, // lat
-      null, // lng
-      null, // alt
-    ]);
-
-    // 位置
-    logRow("location", [
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      latitude,
-      longitude,
-      altitude,
-    ]);
+    // 各種センサーの最新値をそれぞれのログに追加
+    addOrientationRow();
+    addMotionRow();
+    addLocationRow();
   }, SAMPLE_INTERVAL_MS);
 
-  // ==============================
+  // --------------------------------
   // ボタン操作
-  // ==============================
+  // --------------------------------
 
-  // ★ 計測開始ボタン：ここで geolocation を起動する（←重要）
+  // 計測開始
   dom.startBtn.addEventListener("click", () => {
     collecting = true;
     show("=== 計測開始 ===");
 
-    // geolocation はユーザー操作（クリック）後に開始 → 許可ダイアログが出やすい
+    // geolocation はユーザ操作後に開始（許可ダイアログを出すため）
     if (geoWatchId === null && "geolocation" in navigator) {
       geoWatchId = navigator.geolocation.watchPosition(
         (pos) => {
@@ -229,7 +186,7 @@ window.addEventListener("load", () => {
           altitude = c.altitude;
 
           dom.geolocation.value = [latitude, longitude, altitude]
-            .map((v) => (v == null ? "" : v))
+            .map(v => (v == null ? "" : v))
             .join(",");
         },
         (err) => {
@@ -246,26 +203,40 @@ window.addEventListener("load", () => {
     }
   });
 
-  // 計測停止ボタン
+  // 計測停止
   dom.stopBtn.addEventListener("click", () => {
     collecting = false;
     show("=== 計測停止 ===");
-    // geolocation 自体は止めなくてもOK（止めたい場合は下のコメントアウトを外す）
-    /*
-    if (geoWatchId !== null && "geolocation" in navigator) {
-      navigator.geolocation.clearWatch(geoWatchId);
-      geoWatchId = null;
-    }
-    */
+    // geolocation 自体は止めなくてもよい（止めたいなら clearWatch を呼ぶ）
   });
 
-  // CSV保存ボタン
+  // CSV保存（1クリックで3ファイル）
   dom.saveCsvBtn.addEventListener("click", () => {
-    if (logLines.length === 0) {
+    // 何も記録してなければ警告
+    if (
+      logs.orientation.length === 0 &&
+      logs.motion.length === 0 &&
+      logs.location.length === 0
+    ) {
       alert("まだデータがありません");
       return;
     }
-    const csvText = logLines.join("\n");
+
+    // 種類ごとにファイルをダウンロード
+    downloadCsv(logs.orientation, "orientation.csv");
+    downloadCsv(logs.motion, "motion.csv");
+    downloadCsv(logs.location, "location.csv");
+  });
+
+  // --------------------------------
+  // CSVダウンロード共通関数
+  // --------------------------------
+  function downloadCsv(linesArray, filename) {
+    if (!linesArray || linesArray.length === 0) {
+      // その種類のデータが1行も無い場合はスキップ
+      return;
+    }
+    const csvText = linesArray.join("\n");
     const blob = new Blob([csvText], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
 
@@ -275,5 +246,5 @@ window.addEventListener("load", () => {
     a.click();
 
     URL.revokeObjectURL(url);
-  });
+  }
 });
